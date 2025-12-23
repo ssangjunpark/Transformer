@@ -7,7 +7,7 @@ from encoder import Encoder
 
 def train_encoder(epoch=10):
     save_path = "encoder_transformer_ag_news.pt"
-    device = "cpu"
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     data = load_dataset("ag_news")
     tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
@@ -72,7 +72,7 @@ def encoder_inference(texts):
 
     model = Encoder(tokenizer.vocab_size, 128, 16, 16, 128, 4, 2, 256, 4).to(device)
 
-    checkpoint = torch.load("/encoder_transformer_ag_news.pt", map_location=device)
+    checkpoint = torch.load("encoder_transformer_ag_news.pt", map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -82,7 +82,12 @@ def encoder_inference(texts):
         logits = model(enc["input_ids"].to(device), enc["attention_mask"].to(device).long())
         preds = logits.argmax(dim=-1)
 
-    return preds
+    targets = ["World", "Sports", "Business", "Sci/Tech"]
+    
+    print("Prediction: ", targets[preds])
+    probs = nn.functional.softmax(logits)
+    print(probs)
 
 if __name__ == "__main__":
     train_encoder()
+    # encoder_inference("")
