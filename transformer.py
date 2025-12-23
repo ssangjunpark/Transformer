@@ -32,7 +32,6 @@ class MultiHeadAttention(nn.Module):
         self.d_v = d_v
         self.n_att = n_att
 
-        # project into ALL heads at once
         self.q = nn.Linear(d_model, d_qk * n_att)
         self.k = nn.Linear(d_model, d_qk * n_att)
         self.v = nn.Linear(d_model, d_v  * n_att)
@@ -51,7 +50,7 @@ class MultiHeadAttention(nn.Module):
         k_out = k_out.view(N, T, h, self.d_qk).transpose(1, 2)
         v_out = v_out.view(N, T, h, self.d_v ).transpose(1, 2)
 
-        scores = (q_out @ k_out.transpose(-2, -1)) / math.sqrt(self.d_qk)
+        scores = (torch.matmul(q_out, k_out.transpose(-2, -1))) / math.sqrt(self.d_qk)
 
         if mask is not None:
             scores = scores.masked_fill(mask[:, None, None, :] == 0, float("-inf"))
