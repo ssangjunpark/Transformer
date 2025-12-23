@@ -76,8 +76,8 @@ class Transformer(nn.Module):
         )
         self.layerNorm2 = nn.LayerNorm(d_model)
 
-    def forward(self, x):
-        x = self.layerNorm1(x + self.multiHeadAttention(x, mask=None))
+    def forward(self, x, mask=None):
+        x = self.layerNorm1(x + self.multiHeadAttention(x, mask))
         x = self.layerNorm2(x + self.ANN(x))
         return x
 
