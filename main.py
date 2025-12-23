@@ -85,7 +85,7 @@ def encoder_inference(texts):
     targets = ["World", "Sports", "Business", "Sci/Tech"]
     
     print("Prediction: ", targets[preds])
-    probs = nn.functional.softmax(logits)
+    probs = nn.functional.softmax(logits, dim=-1)[0][preds]
     print(probs)
 
 if __name__ == "__main__":
