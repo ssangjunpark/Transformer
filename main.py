@@ -197,7 +197,7 @@ def decoder_inference(
     temperature=1.0,
     top_k=50,
 ):
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     tok = AutoTokenizer.from_pretrained("distilbert-base-uncased")
     if tok.pad_token_id is None:
