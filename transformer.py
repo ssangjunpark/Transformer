@@ -58,7 +58,48 @@ class MultiHeadAttention(nn.Module):
         out = torch.matmul(nn.functional.softmax(scores, dim=-1), v_out).transpose(1, 2).contiguous().view(N, T, h * self.d_v)
 
         return self.lin(out)
-        
+    
+class CasualMaskMultiHeadAttention(nn.Module):
+    def __init__(self, d_model, d_qk, d_v, n_att, max_length):
+        super().__init__()
+
+        self.d_model = d_model
+        self.d_qk = d_qk
+        self.d_v = d_v
+        self.n_att = n_att
+
+        self.q = nn.Linear(d_model, d_qk * n_att)
+        self.k = nn.Linear(d_model, d_qk * n_att)
+        self.v = nn.Linear(d_model, d_v  * n_att)
+
+        self.lin = nn.Linear(d_v * n_att, d_model)
+
+        casual_mask = torch.tril(torch.ones(max_length, max_length))
+        self.register_buffer("casual_mask", casual_mask.view(1,1, max_length, max_length))
+
+    def forward(self, x, pad_mask=None):
+        N, T, _ = x.shape
+        h = self.n_att
+
+        q_out = self.q(x)
+        k_out = self.k(x)
+        v_out = self.v(x)
+
+        q_out = q_out.view(N, T, h, self.d_qk).transpose(1, 2)
+        k_out = k_out.view(N, T, h, self.d_qk).transpose(1, 2)
+        v_out = v_out.view(N, T, h, self.d_v ).transpose(1, 2)
+
+        scores = (torch.matmul(q_out, k_out.transpose(-2, -1))) / math.sqrt(self.d_qk)
+
+        if pad_mask is not None:
+            scores = scores.masked_fill(pad_mask[:, None, None, :] == 0, float("-inf"))
+
+        scores = scores.masked_fill(self.casual_mask[:, :, :T, :T] == 0, float("-inf"))
+
+        out = torch.matmul(nn.functional.softmax(scores, dim=-1), v_out).transpose(1, 2).contiguous().view(N, T, h * self.d_v)
+
+        return self.lin(out)
+         
 class Transformer(nn.Module):
     def __init__(self, d_model, d_qk, d_v, n_att):
         super().__init__()
@@ -77,6 +118,27 @@ class Transformer(nn.Module):
 
     def forward(self, x, mask=None):
         x = self.layerNorm1(x + self.multiHeadAttention(x, mask))
+        x = self.layerNorm2(x + self.ANN(x))
+        return x
+    
+class CasualMaskTransformer(nn.Module):
+    def __init__(self, d_model, d_qk, d_v, n_att, max_length):
+        super().__init__()
+        self.d_model = d_model
+        self.d_qk = d_qk
+        self.d_v = d_v
+
+        self.multiHeadAttention = CasualMaskMultiHeadAttention(d_model, self.d_qk, self.d_v, n_att, max_length)
+        self.layerNorm1 = nn.LayerNorm(d_model)
+        self.ANN = nn.Sequential(
+            nn.Linear(d_model, d_model * 2),
+            nn.ReLU(),
+            nn.Linear(d_model * 2, d_model)
+        )
+        self.layerNorm2 = nn.LayerNorm(d_model)
+
+    def forward(self, x, pad_mask=None):
+        x = self.layerNorm1(x + self.multiHeadAttention(x, pad_mask))
         x = self.layerNorm2(x + self.ANN(x))
         return x
 

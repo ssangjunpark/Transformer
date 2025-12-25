@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 from transformers import AutoTokenizer, DataCollatorWithPadding
 from encoder import Encoder
+from decoder import Decoder
 
 def train_encoder(epoch=10):
     save_path = "encoder_transformer_ag_news.pt"
@@ -88,6 +89,120 @@ def encoder_inference(texts):
     probs = nn.functional.softmax(logits, dim=-1)[0][preds]
     print(probs)
 
+def train_decoder(
+    epoch=10,
+    save_path="decoder_transformer_owt.pt",
+    device=None,
+    dataset_name="Skylion007/openwebtext",
+    split="train",
+    seq_len=256,
+    batch_size=32,
+    lr=3e-4,
+    max_steps_per_epoch=10_000,
+    log_every=200,
+):
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    pad_id = tokenizer.pad_token_id
+    vocab_size = tokenizer.vocab_size
+
+    ds = load_dataset(dataset_name, split=split, streaming=True)
+
+    def block_iterator(dataset_iter, tokenizer, seq_len):
+        buffer = []
+        for ex in dataset_iter:
+            text = ex.get("text", None)
+            if text is None:
+                continue
+
+            ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+            if len(ids) == 0:
+                continue
+
+            ids = ids + [tokenizer.eos_token_id]
+            buffer.extend(ids)
+
+            while len(buffer) >= seq_len:
+                block = buffer[:seq_len]
+                buffer = buffer[seq_len:]
+                yield torch.tensor(block, dtype=torch.long)
+
+    def collate_blocks(batch_blocks):
+        input_ids = torch.stack(batch_blocks, dim=0)
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+    loader = DataLoader(
+        block_iterator(ds, tokenizer, seq_len),
+        batch_size=batch_size,
+        collate_fn=collate_blocks,
+        num_workers=0,
+    )
+
+    model = Decoder(
+        num_embed=vocab_size,
+        d_embed=128,
+        d_qk=16,
+        d_v=16,
+        d_model=128,
+        n_att=4,
+        n_transformers=2,
+        max_length=seq_len,
+        num_vocab=vocab_size,
+    ).to(device)
+
+    criterion = nn.CrossEntropyLoss(ignore_index=-100)
+    optim = torch.optim.AdamW(model.parameters(), lr=lr)
+
+    for ep in range(epoch):
+        model.train()
+        total_loss = 0.0
+        total_tokens = 0
+
+        for step, batch in enumerate(loader, start=1):
+            if step > max_steps_per_epoch:
+                break
+
+            input_ids = batch["input_ids"].to(device)
+            attn_mask = batch["attention_mask"].to(device)
+
+            x = input_ids[:, :-1]
+            y = input_ids[:, 1:].clone()
+            pad_mask = attn_mask[:, :-1]
+
+            y[input_ids[:, 1:] == pad_id] = -100
+
+            optim.zero_grad(set_to_none=True)
+            logits = model(x, pad_mask=pad_mask)
+
+            loss = criterion(logits.reshape(-1, vocab_size), y.reshape(-1))
+            loss.backward()
+            optim.step()
+
+            n_toks = (y != -100).sum().item()
+            total_loss += loss.item() * n_toks
+            total_tokens += n_toks
+
+            if step % log_every == 0:
+                print(f"ep {ep+1} step {step} | loss {total_loss/max(total_tokens,1):.4f}")
+
+        print(f"epoch {ep+1} done | avg loss {total_loss/max(total_tokens,1):.4f}")
+
+    torch.save(
+        {"model_state_dict": model.state_dict(), "vocab_size": vocab_size, "tokenizer_name": "gpt2"},
+        save_path,
+    )
+    print(f"Saved weights to {save_path}")
+
+
+def decoder_inference(text):
+    pass
+
 if __name__ == "__main__":
-    train_encoder()
-    # encoder_inference("")
+    # train_encoder()
+    # encoder_inference("umpire is going to be replaced with sensors")
+    train_decoder()
