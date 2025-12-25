@@ -190,11 +190,77 @@ def train_decoder(epoch=10):
 
     print(f"test loss: {t_loss/max(total_tokens,1):.4f}")
 
+def decoder_inference(
+    text,
+    max_new_tokens=50,
+    seq_len=256,
+    temperature=1.0,
+    top_k=50,
+):
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-def decoder_inference(text):
-    pass
+    tok = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+    if tok.pad_token_id is None:
+        tok.add_special_tokens({"pad_token": "[PAD]"})
+    pad_id = tok.pad_token_id
+
+    ckpt = torch.load("decoder_transformer_ag_news.pt", map_location="cpu")
+    vocab_size = ckpt.get("vocab_size", tok.vocab_size)
+
+    model = Decoder(
+        num_embed=vocab_size,
+        d_embed=128,
+        d_qk=16,
+        d_v=16,
+        d_model=128,
+        n_att=4,
+        n_transformers=2,
+        max_length=seq_len,
+        num_vocab=vocab_size,
+    ).to(device)
+
+    model.load_state_dict(ckpt["model_state_dict"], strict=True)
+    model.eval()
+
+    ids = tok(text, add_special_tokens=False)["input_ids"]
+    if len(ids) == 0:
+        ids = [tok.cls_token_id] if tok.cls_token_id is not None else [pad_id]
+
+    input_ids = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+
+    with torch.no_grad():
+        for _ in range(max_new_tokens):
+            if input_ids.size(1) > seq_len:
+                input_ids = input_ids[:, -seq_len:]
+
+            attn_mask = torch.ones_like(input_ids, dtype=torch.long, device=device)
+
+            x = input_ids
+            pad_mask = attn_mask
+
+            logits = model(x, pad_mask=pad_mask)
+            next_logits = logits[:, -1, :]
+
+            if temperature is not None and temperature > 0:
+                next_logits = next_logits / temperature
+
+            if top_k is not None and top_k > 0:
+                k = min(top_k, next_logits.size(-1))
+                vals, idx = torch.topk(next_logits, k, dim=-1)
+                probs = torch.nn.functional.softmax(vals, dim=-1)
+                next_token = idx.gather(-1, torch.multinomial(probs, num_samples=1))
+            else:
+                probs = torch.nn.functional.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+            input_ids = torch.cat([input_ids, next_token], dim=1)
+
+    out = tok.decode(input_ids[0].tolist(), skip_special_tokens=True)
+    print(out)
+    return out
 
 if __name__ == "__main__":
     # train_encoder()
     # encoder_inference("umpire is going to be replaced with sensors")
-    train_decoder()
+    # train_decoder()
+    decoder_inference("Hello world! This is")
