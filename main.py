@@ -89,7 +89,7 @@ def encoder_inference(texts):
     probs = nn.functional.softmax(logits, dim=-1)[0][preds]
     print(probs)
 
-def train_decoder(epoch=10):
+def train_decoder(epoch=30):
     save_path = "decoder_transformer_ag_news.pt"
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     data = load_dataset("ag_news")
@@ -115,12 +115,12 @@ def train_decoder(epoch=10):
 
     model = Decoder(
         num_embed=vocab_size,
-        d_embed=128,
-        d_qk=16,
-        d_v=16,
-        d_model=128,
-        n_att=4,
-        n_transformers=2,
+        d_embed=256,
+        d_qk=32,
+        d_v=32,
+        d_model=256,
+        n_att=16,
+        n_transformers=8,
         max_length=seq_len,
         num_vocab=vocab_size,
     ).to(device)
@@ -197,7 +197,7 @@ def decoder_inference(
     temperature=1.0,
     top_k=50,
 ):
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = ("cuda" if torch.cuda.is_available() else "cpu")
 
     tok = AutoTokenizer.from_pretrained("distilbert-base-uncased")
     if tok.pad_token_id is None:
@@ -209,12 +209,12 @@ def decoder_inference(
 
     model = Decoder(
         num_embed=vocab_size,
-        d_embed=128,
-        d_qk=16,
-        d_v=16,
-        d_model=128,
-        n_att=4,
-        n_transformers=2,
+        d_embed=256,
+        d_qk=32,
+        d_v=32,
+        d_model=256,
+        n_att=16,
+        n_transformers=8,
         max_length=seq_len,
         num_vocab=vocab_size,
     ).to(device)
