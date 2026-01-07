@@ -6,6 +6,7 @@ from transformers import AutoTokenizer, DataCollatorWithPadding
 from encoder import Encoder
 from decoder import Decoder
 from transformer import Transformer
+from datetime import datetime
 
 def train_encoder(epoch=10):
     save_path = "encoder_transformer_ag_news.pt"
@@ -263,6 +264,7 @@ def decoder_inference(
 
 def train_transformer(epoch=5):
     save_path = "transformer_translation_en_ko.pt"
+    name = "transformer_translation_en_ko"
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     print("Loading dataset...")
@@ -318,7 +320,8 @@ def train_transformer(epoch=5):
     
     optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
-    
+
+    t0 = datetime.now()
     print("Start Training...")
     for i in range(epoch):
         model.train()
@@ -326,6 +329,7 @@ def train_transformer(epoch=5):
         total_counts = 0
         
         for batch in train_loader:
+            t_batch = datetime.now()
             optim.zero_grad()
             
             src = batch["src"].to(device)
@@ -345,9 +349,11 @@ def train_transformer(epoch=5):
             
             total_loss += loss.item()
             total_counts += 1
-            print(f"Epoch {i+1} | Progress {total_counts}/{len(train_loader)} | Batch Loss {loss.item():.4f}")
-            
-        print(f"Epoch {i+1} | Loss {total_loss/total_counts:.4f}")
+            print(f"Epoch {i+1} | Progress {total_counts % len(train_loader)}/{len(train_loader)} | Batch Loss {loss.item():.4f} | Time {datetime.now() - t_batch}")
+        
+        t_complete_epoch = datetime.now() - t0
+        print(f"Epoch {i+1} | Loss {total_loss/total_counts:.4f} | Time {t_complete_epoch}")
+        torch.save(model.state_dict(), name + "_" + str(i+1) + ".pt")
         
     torch.save(model.state_dict(), save_path)
     print(f"Model saved to {save_path}")
