@@ -345,6 +345,7 @@ def train_transformer(epoch=5):
             
             total_loss += loss.item()
             total_counts += 1
+            print(f"Epoch {i+1} | Progress {total_counts}/{len(train_loader)} | Batch Loss {loss.item():.4f}")
             
         print(f"Epoch {i+1} | Loss {total_loss/total_counts:.4f}")
         
