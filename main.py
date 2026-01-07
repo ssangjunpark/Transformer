@@ -5,6 +5,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, DataCollatorWithPadding
 from encoder import Encoder
 from decoder import Decoder
+from transformer import Transformer
 
 def train_encoder(epoch=10):
     save_path = "encoder_transformer_ag_news.pt"
@@ -259,8 +260,145 @@ def decoder_inference(
     print(out)
     return out
 
+
+def train_transformer(epoch=5):
+    save_path = "transformer_translation_en_ko.pt"
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    print("Loading dataset...")
+    ds = load_dataset("lemon-mint/korean_english_parallel_wiki_augmented_v1")
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
+    
+    seq_len = 128
+    batch_size = 32
+
+    def preprocess_function(examples):
+        inputs = examples["english"]
+        targets = examples["korean"]
+        
+        model_inputs = tokenizer(inputs, max_length=seq_len, truncation=True)
+        labels = tokenizer(targets, max_length=seq_len, truncation=True)
+        
+        model_inputs["labels"] = labels["input_ids"]
+        return model_inputs
+
+    print("Tokenizing dataset...")
+    tokenized_datasets = ds.map(
+        preprocess_function, 
+        batched=True, 
+        remove_columns=ds["train"].column_names
+    )
+
+    def collate_fn(batch):
+        src_ids = [item["input_ids"] for item in batch]
+        tgt_ids = [item["labels"] for item in batch]
+        
+        src_batch = tokenizer.pad({"input_ids": src_ids}, padding=True, return_tensors="pt")
+        tgt_batch = tokenizer.pad({"input_ids": tgt_ids}, padding=True, return_tensors="pt")
+        
+        return {
+            "src": src_batch["input_ids"],
+            "src_mask": src_batch["attention_mask"],
+            "tgt": tgt_batch["input_ids"],
+            "tgt_mask": tgt_batch["attention_mask"]
+        }
+
+    train_loader = DataLoader(tokenized_datasets["train"], batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    
+    model = Transformer(
+        num_emb=tokenizer.vocab_size,
+        d_model=256,
+        d_qk=32,
+        d_v=32,
+        n_att=8,
+        n_enc_blocks=4,
+        n_dec_blocks=4,
+        max_len=seq_len
+    ).to(device)
+    
+    optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
+    
+    print("Start Training...")
+    for i in range(epoch):
+        model.train()
+        total_loss = 0
+        total_counts = 0
+        
+        for batch in train_loader:
+            optim.zero_grad()
+            
+            src = batch["src"].to(device)
+            src_mask = batch["src_mask"].to(device)
+            tgt = batch["tgt"].to(device)
+            tgt_mask = batch["tgt_mask"].to(device)
+            
+            dec_input = tgt[:, :-1]
+            dec_target = tgt[:, 1:]
+            dec_mask = tgt_mask[:, :-1]
+            
+            logits = model(src, dec_input, src_mask=src_mask, tgt_mask=dec_mask)
+            
+            loss = criterion(logits.reshape(-1, tokenizer.vocab_size), dec_target.reshape(-1))
+            loss.backward()
+            optim.step()
+            
+            total_loss += loss.item()
+            total_counts += 1
+            
+        print(f"Epoch {i+1} | Loss {total_loss/total_counts:.4f}")
+        
+    torch.save(model.state_dict(), save_path)
+    print(f"Model saved to {save_path}")
+
+def inference_transformer(text):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
+    seq_len = 128
+    
+    model = Transformer(
+        num_emb=tokenizer.vocab_size,
+        d_model=256,
+        d_qk=32,
+        d_v=32,
+        n_att=8,
+        n_enc_blocks=4,
+        n_dec_blocks=4,
+        max_len=seq_len
+    ).to(device)
+    
+    model.load_state_dict(torch.load("transformer_translation_en_ko.pt", map_location=device))
+    model.eval()
+    
+    src = tokenizer(text, return_tensors="pt", truncation=True, max_length=seq_len).to(device)
+    src_ids = src["input_ids"]
+    src_mask = src["attention_mask"]
+    
+    enc_out = model.encode(src_ids, src_mask)
+    
+    tgt_ids = torch.tensor([[tokenizer.cls_token_id]], device=device)
+    
+    for _ in range(seq_len):
+        tgt_mask = torch.ones_like(tgt_ids)
+        out = model.decode(tgt_ids, enc_out, tgt_mask=tgt_mask, enc_mask=src_mask)
+        
+        next_token_logits = out[:, -1, :]
+        next_token = next_token_logits.argmax(dim=-1).unsqueeze(0)
+        
+        tgt_ids = torch.cat([tgt_ids, next_token], dim=1)
+        
+        if next_token.item() == tokenizer.sep_token_id:
+            break
+            
+    print(tokenizer.decode(tgt_ids[0], skip_special_tokens=True))
+
+
 if __name__ == "__main__":
     # train_encoder()
     # encoder_inference("umpire is going to be replaced with sensors")
     # train_decoder()
-    decoder_inference("Hello world! This is")
+    # decoder_inference("Hello world! This is")
+    # train_transformer(epoch=1) # Train for 1 epoch for demonstration
+    # inference_transformer("Hello world")
+    train_transformer(epoch=5)
+    pass

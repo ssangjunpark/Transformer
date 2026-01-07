@@ -1,4 +1,4 @@
-from transformer import Transformer, PositionalEncoding
+from utils import Transformer, PositionalEncoding
 import torch
 import torch.nn as nn
 

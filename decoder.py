@@ -1,4 +1,4 @@
-from transformer import CasualMaskTransformer, PositionalEncoding
+from utils import CasualMaskTransformer, PositionalEncoding
 import torch
 import torch.nn as nn
 

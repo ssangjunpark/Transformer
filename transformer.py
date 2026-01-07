@@ -1,156 +1,48 @@
-import math
 import torch
 import torch.nn as nn
+from utils import Transformer as EncoderBlock
+from utils import Seq2SeqDecoderBlock, PositionalEncoding
 
-class Attention(nn.Module):
-    def __init__(self, d_model, d_qk, d_v):
-        super().__init__()
-
-        self.d_model = d_model
-        self.d_qk = d_qk
-        self.d_v = d_v
-
-        self.q = nn.Linear(self.d_model, self.d_qk)
-        self.k = nn.Linear(self.d_model, self.d_qk)
-        self.v = nn.Linear(self.d_model, self.d_v)
-    
-    def forward(self, x):
-        q_out = self.q(x)
-        k_out = self.k(x)
-        v_out = self.v(x)
-        
-        scores = torch.matmul(q_out, k_out.transpose(-1, -2)) / math.sqrt(self.d_qk)
-        attn = nn.functional.softmax(scores, dim=-1)
-
-        return torch.matmul(attn, v_out)
-
-class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, d_qk, d_v, n_att):
-        super().__init__()
-        self.d_model = d_model
-        self.d_qk = d_qk
-        self.d_v = d_v
-        self.n_att = n_att
-
-        self.q = nn.Linear(d_model, d_qk * n_att)
-        self.k = nn.Linear(d_model, d_qk * n_att)
-        self.v = nn.Linear(d_model, d_v  * n_att)
-
-        self.lin = nn.Linear(d_v * n_att, d_model)
-
-    def forward(self, x, mask=None):
-        N, T, _ = x.shape
-        h = self.n_att
-
-        q_out = self.q(x)
-        k_out = self.k(x)
-        v_out = self.v(x)
-
-        q_out = q_out.view(N, T, h, self.d_qk).transpose(1, 2)
-        k_out = k_out.view(N, T, h, self.d_qk).transpose(1, 2)
-        v_out = v_out.view(N, T, h, self.d_v ).transpose(1, 2)
-
-        scores = (torch.matmul(q_out, k_out.transpose(-2, -1))) / math.sqrt(self.d_qk)
-
-        if mask is not None:
-            scores = scores.masked_fill(mask[:, None, None, :] == 0, float("-inf"))
-
-        out = torch.matmul(nn.functional.softmax(scores, dim=-1), v_out).transpose(1, 2).contiguous().view(N, T, h * self.d_v)
-
-        return self.lin(out)
-    
-class CasualMaskMultiHeadAttention(nn.Module):
-    def __init__(self, d_model, d_qk, d_v, n_att, max_length):
-        super().__init__()
-
-        self.d_model = d_model
-        self.d_qk = d_qk
-        self.d_v = d_v
-        self.n_att = n_att
-
-        self.q = nn.Linear(d_model, d_qk * n_att)
-        self.k = nn.Linear(d_model, d_qk * n_att)
-        self.v = nn.Linear(d_model, d_v  * n_att)
-
-        self.lin = nn.Linear(d_v * n_att, d_model)
-
-        casual_mask = torch.tril(torch.ones(max_length, max_length))
-        self.register_buffer("casual_mask", casual_mask.view(1,1, max_length, max_length))
-
-    def forward(self, x, pad_mask=None):
-        N, T, _ = x.shape
-        h = self.n_att
-
-        q_out = self.q(x)
-        k_out = self.k(x)
-        v_out = self.v(x)
-
-        q_out = q_out.view(N, T, h, self.d_qk).transpose(1, 2)
-        k_out = k_out.view(N, T, h, self.d_qk).transpose(1, 2)
-        v_out = v_out.view(N, T, h, self.d_v ).transpose(1, 2)
-
-        scores = (torch.matmul(q_out, k_out.transpose(-2, -1))) / math.sqrt(self.d_qk)
-
-        if pad_mask is not None:
-            scores = scores.masked_fill(pad_mask[:, None, None, :] == 0, float("-inf"))
-
-        scores = scores.masked_fill(self.casual_mask[:, :, :T, :T] == 0, float("-inf"))
-
-        out = torch.matmul(nn.functional.softmax(scores, dim=-1), v_out).transpose(1, 2).contiguous().view(N, T, h * self.d_v)
-
-        return self.lin(out)
-         
 class Transformer(nn.Module):
-    def __init__(self, d_model, d_qk, d_v, n_att):
+    def __init__(self, num_emb, d_model, d_qk, d_v, n_att, n_enc_blocks, n_dec_blocks, max_len):
         super().__init__()
-        self.d_model = d_model
-        self.d_qk = d_qk
-        self.d_v = d_v
+        
+        self.embedding = nn.Embedding(num_emb, d_model)
+        self.pos_enc = PositionalEncoding(d_model, max_len)
+        
+        self.encoder = nn.ModuleList([
+            EncoderBlock(d_model, d_qk, d_v, n_att) for _ in range(n_enc_blocks)
+        ])
+        
+        self.decoder = nn.ModuleList([
+            Seq2SeqDecoderBlock(d_model, d_qk, d_v, n_att, max_len) for _ in range(n_dec_blocks)
+        ])
+        
+        self.fc = nn.Linear(d_model, num_emb)
+        
+    def forward(self, src, tgt, src_mask=None, tgt_mask=None):
+        e_out = self.embedding(src)
+        e_out = self.pos_enc(e_out)
+        for block in self.encoder:
+            e_out = block(e_out, mask=src_mask)
+            
+        d_out = self.embedding(tgt)
+        d_out = self.pos_enc(d_out)
+        for block in self.decoder:
+            d_out = block(d_out, enc_out=e_out, pad_mask=tgt_mask, enc_mask=src_mask)
+            
+        return self.fc(d_out)
 
-        self.multiHeadAttention = MultiHeadAttention(d_model, self.d_qk, self.d_v, n_att)
-        self.layerNorm1 = nn.LayerNorm(d_model)
-        self.ANN = nn.Sequential(
-            nn.Linear(d_model, d_model * 2),
-            nn.ReLU(),
-            nn.Linear(d_model * 2, d_model)
-        )
-        self.layerNorm2 = nn.LayerNorm(d_model)
-
-    def forward(self, x, mask=None):
-        x = self.layerNorm1(x + self.multiHeadAttention(x, mask))
-        x = self.layerNorm2(x + self.ANN(x))
-        return x
-    
-class CasualMaskTransformer(nn.Module):
-    def __init__(self, d_model, d_qk, d_v, n_att, max_length):
-        super().__init__()
-        self.d_model = d_model
-        self.d_qk = d_qk
-        self.d_v = d_v
-
-        self.multiHeadAttention = CasualMaskMultiHeadAttention(d_model, self.d_qk, self.d_v, n_att, max_length)
-        self.layerNorm1 = nn.LayerNorm(d_model)
-        self.ANN = nn.Sequential(
-            nn.Linear(d_model, d_model * 2),
-            nn.ReLU(),
-            nn.Linear(d_model * 2, d_model)
-        )
-        self.layerNorm2 = nn.LayerNorm(d_model)
-
-    def forward(self, x, pad_mask=None):
-        x = self.layerNorm1(x + self.multiHeadAttention(x, pad_mask))
-        x = self.layerNorm2(x + self.ANN(x))
-        return x
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=1000):
-        super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        pos = torch.arange(max_len).float().unsqueeze(1)
-        div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(pos * div)
-        pe[:, 1::2] = torch.cos(pos * div)
-        self.register_buffer("pe", pe.unsqueeze(0))
-
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1), :]
+    def encode(self, src, src_mask=None):
+        e_out = self.embedding(src)
+        e_out = self.pos_enc(e_out)
+        for block in self.encoder:
+            e_out = block(e_out, mask=src_mask)
+        return e_out
+        
+    def decode(self, tgt, enc_out, tgt_mask=None, enc_mask=None):
+        d_out = self.embedding(tgt)
+        d_out = self.pos_enc(d_out)
+        for block in self.decoder:
+            d_out = block(d_out, enc_out=enc_out, pad_mask=tgt_mask, enc_mask=enc_mask)
+        return self.fc(d_out)
