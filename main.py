@@ -329,7 +329,6 @@ def train_transformer(epoch=5):
         total_counts = 0
         
         for batch in train_loader:
-            t_batch = datetime.now()
             optim.zero_grad()
             
             src = batch["src"].to(device)
@@ -349,7 +348,7 @@ def train_transformer(epoch=5):
             
             total_loss += loss.item()
             total_counts += 1
-            print(f"Epoch {i+1} | Progress {total_counts % len(train_loader)}/{len(train_loader)} | Batch Loss {loss.item():.4f} | Time {datetime.now() - t_batch}")
+            print(f"Epoch {i+1} | Progress {total_counts % len(train_loader)}/{len(train_loader)} | Batch Loss {loss.item():.4f} | Time {datetime.now() - t0}")
         
         t_complete_epoch = datetime.now() - t0
         print(f"Epoch {i+1} | Loss {total_loss/total_counts:.4f} | Time {t_complete_epoch}")
@@ -374,7 +373,7 @@ def inference_transformer(text):
         max_len=seq_len
     ).to(device)
     
-    model.load_state_dict(torch.load("transformer_translation_en_ko.pt", map_location=device))
+    model.load_state_dict(torch.load("transformer_translation_en_ko_20.pt", map_location=device))
     model.eval()
     
     src = tokenizer(text, return_tensors="pt", truncation=True, max_length=seq_len).to(device)
@@ -407,5 +406,6 @@ if __name__ == "__main__":
     # decoder_inference("Hello world! This is")
     # train_transformer(epoch=1) # Train for 1 epoch for demonstration
     # inference_transformer("Hello world")
-    train_transformer(epoch=5)
+    # train_transformer(epoch=20)
+    inference_transformer("Hello World!")
     pass
